@@ -1,0 +1,4 @@
+# The C runtime linked in statically: the exe imports no vcruntime140.dll (a DLL that could be
+# planted beside it).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

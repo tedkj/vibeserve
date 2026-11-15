@@ -1,0 +1,436 @@
+// VibeServe's main window. Layout and drawing only; every decision is made in Rust.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Type, Icons, IconButton, TipLayer, Toast, ToastKind, Field, Segmented } from "@vibeware";
+import { Brand, AboutDialog, CheckRow } from "brand.slint";
+import { CardView, AddrLine, TransferRow, LogRow, SyslogRow, SyslogDetail, FirewallView, ConsentView } from "types.slint";
+import { ServerCard } from "cards.slint";
+import { SyslogPane, LogPane } from "tables.slint";
+import { FirewallChip, ConsentDialog } from "topbar.slint";
+
+export struct ToastItem {
+    id: int,
+    text: string,
+    kind: ToastKind,
+    action: string,
+}
+
+export component AppWindow inherits Window {
+    title: "VibeServe";
+    icon: @image-url("../assets/app-128.png");
+    preferred-width: 1200px;
+    preferred-height: 760px;
+    min-width: 920px;
+    min-height: 600px;
+    background: Theme.surface;
+    default-font-family: Type.ui;
+    default-font-size: Type.small;
+    default-font-weight: Type.regular;
+
+    in property <string> version;
+    in property <string> status-left;
+    in property <string> status-right;
+    in property <bool> status-warn;
+    in property <[ToastItem]> toasts;
+    in-out property <bool> about-open;
+    // About's version line and its install check (the controller's words and states).
+    in property <string> about-line;
+    in property <[CheckRow]> check-rows;
+    in property <bool> checking;
+    in property <bool> checked;
+
+    // ---- the top bar ----
+    in-out property <string> root-text;
+    in property <bool> root-invalid;
+    in property <string> root-tip;
+    in property <FirewallView> firewall;
+
+    // ---- the cards (0 TFTP, 1 syslog, 2 HTTP) ----
+    in property <CardView> tftp;
+    in property <CardView> syslog;
+    in property <CardView> http;
+    in property <[string]> tftp-binds;
+    in property <[string]> syslog-binds;
+    in property <[string]> http-binds;
+    in property <[AddrLine]> tftp-addrs;
+    in property <[AddrLine]> syslog-addrs;
+    in property <[AddrLine]> http-addrs;
+    in property <[TransferRow]> transfers;
+
+    // ---- the right side ----
+    in property <int> tab;
+    in property <[string]> tabs;
+    in property <[SyslogRow]> syslog-rows;
+    in property <string> syslog-empty;
+    in property <SyslogDetail> detail;
+    in-out property <string> filter-text;
+    in property <[string]> severities;
+    in property <int> severity;
+    in property <[string]> sources;
+    in property <int> source;
+    in property <bool> paused;
+    in property <string> pause-text;
+    in property <bool> log-to-file;
+    in property <string> log-note;
+    in property <int> log-note-kind;
+    in property <string> log-folder;
+    in property <int> syslog-scroll-to: -1;
+    in property <int> syslog-scroll-seq;
+    in property <[LogRow]> tftp-log;
+    in property <[LogRow]> http-log;
+    in property <string> tftp-count;
+    in property <string> http-count;
+    in property <string> tftp-empty;
+    in property <string> http-empty;
+
+    // ---- the consent before the UAC prompt ----
+    in property <bool> consent-open;
+    in property <ConsentView> consent;
+
+    property <bool> dialog-open: root.about-open || root.consent-open;
+
+    callback toggle-theme();
+    // About: "Check this install" pressed (the controller runs it on a worker, once at a time),
+    // and the website link.
+    callback check-install();
+    callback open-site();
+    callback toast-action(int);
+    callback toast-dismissed(int);
+    // A dialog closed: toasts behind it get their full time again (a toast in sight but out of
+    // reach must not expire).
+    callback dialogs-closed();
+    callback copy-text(string) -> bool;
+    callback addrs-toggled(int);
+
+    callback root-accepted(string);
+    callback root-escaped() -> bool;
+    callback root-blurred();
+    callback pick-root();
+    callback open-root();
+    callback firewall-clicked();
+
+    callback server-toggled(int, bool);
+    callback port-edited(int, string);
+    callback port-accepted(int, string);
+    callback port-escaped(int) -> bool;
+    callback port-blurred(int);
+    callback bind-picked(int, int);
+    callback writes-toggled(int, bool);
+    callback proto-toggled(bool, bool);
+    callback card-action(int);
+
+    callback tab-picked(int);
+    callback filter-edited(string);
+    callback filter-escaped() -> bool;
+    callback severity-picked(int);
+    callback source-picked(int);
+    callback pause-toggled();
+    callback clear-syslog();
+    callback log-to-file-toggled(bool);
+    callback pick-log-folder();
+    callback save-view();
+    callback syslog-row-clicked(int);
+    callback syslog-key(int);
+    callback copy-detail() -> bool;
+    callback copy-log(int) -> bool;
+    callback clear-log(int);
+
+    callback consent-allow();
+    callback consent-cancel();
+    callback consent-blocks(bool);
+
+    changed dialog-open => {
+        if (!self.dialog-open) {
+            root.dialogs-closed();
+        }
+    }
+
+    VerticalLayout {
+        // ---- the bar ----
+        Rectangle {
+            height: 48px;
+            background: Theme.bg;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 10px;
+                spacing: 8px;
+                Brand {}
+                Rectangle { width: 16px; }
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    max-width: 560px;
+                    Field {
+                        label: "ROOT";
+                        a11y-name: "Root folder";
+                        mono: true;
+                        text <=> root.root-text;
+                        invalid: root.root-invalid;
+                        inert: root.dialog-open;
+                        accepted(t) => { root.root-accepted(t); }
+                        escaped => { root.root-escaped() }
+                        blurred => { root.root-blurred(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        icon: Icons.folder;
+                        label: "Choose root folder";
+                        tooltip: root.root-tip != "" ? root.root-tip : "Choose the folder TFTP and HTTP serve";
+                        inert: root.dialog-open;
+                        clicked => { root.pick-root(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        icon: Icons.external;
+                        label: "Open root folder";
+                        tooltip: "Open the root folder in Explorer";
+                        inert: root.dialog-open;
+                        clicked => { root.open-root(); }
+                    }
+                }
+                Rectangle { horizontal-stretch: 0.0001; min-width: 8px; }
+                VerticalLayout {
+                    alignment: center;
+                    FirewallChip {
+                        f: root.firewall;
+                        inert: root.dialog-open;
+                        clicked => { root.firewall-clicked(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        icon: Icons.theme;
+                        label: "Theme";
+                        tooltip: Theme.dark ? "Light theme" : "Dark theme";
+                        inert: root.dialog-open;
+                        clicked => { root.toggle-theme(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        icon: Icons.info;
+                        label: "About";
+                        tooltip: "About VibeServe";
+                        inert: root.dialog-open;
+                        clicked => { root.about-open = true; }
+                    }
+                }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.line; }
+
+        // ---- the work area ----
+        HorizontalLayout {
+            vertical-stretch: 1;
+            // The server cards.
+            Rectangle {
+                width: 340px;
+                background: Theme.bg;
+                ScrollView {
+                    content-width: self.visible-width;
+                    content-height: cards.preferred-height;
+                    cards := VerticalLayout {
+                        width: parent.visible-width;
+                        padding: 12px;
+                        spacing: 10px;
+                        ServerCard {
+                            kind: 0;
+                            c: root.tftp;
+                            binds: root.tftp-binds;
+                            addrs: root.tftp-addrs;
+                            transfers: root.transfers;
+                            inert: root.dialog-open;
+                            toggled(v) => { root.server-toggled(0, v); }
+                            port-edited(t) => { root.port-edited(0, t); }
+                            port-accepted(t) => { root.port-accepted(0, t); }
+                            port-escaped => { root.port-escaped(0) }
+                            port-blurred => { root.port-blurred(0); }
+                            bind-picked(i) => { root.bind-picked(0, i); }
+                            writes-toggled(v) => { root.writes-toggled(0, v); }
+                            action => { root.card-action(0); }
+                            copy(t) => { root.copy-text(t) }
+                            addrs-toggled => { root.addrs-toggled(0); }
+                        }
+                        ServerCard {
+                            kind: 1;
+                            c: root.syslog;
+                            binds: root.syslog-binds;
+                            addrs: root.syslog-addrs;
+                            inert: root.dialog-open;
+                            toggled(v) => { root.server-toggled(1, v); }
+                            port-edited(t) => { root.port-edited(1, t); }
+                            port-accepted(t) => { root.port-accepted(1, t); }
+                            port-escaped => { root.port-escaped(1) }
+                            port-blurred => { root.port-blurred(1); }
+                            bind-picked(i) => { root.bind-picked(1, i); }
+                            proto-toggled(tcp, v) => { root.proto-toggled(tcp, v); }
+                            action => { root.card-action(1); }
+                            copy(t) => { root.copy-text(t) }
+                            addrs-toggled => { root.addrs-toggled(1); }
+                        }
+                        ServerCard {
+                            kind: 2;
+                            c: root.http;
+                            binds: root.http-binds;
+                            addrs: root.http-addrs;
+                            inert: root.dialog-open;
+                            toggled(v) => { root.server-toggled(2, v); }
+                            port-edited(t) => { root.port-edited(2, t); }
+                            port-accepted(t) => { root.port-accepted(2, t); }
+                            port-escaped => { root.port-escaped(2) }
+                            port-blurred => { root.port-blurred(2); }
+                            bind-picked(i) => { root.bind-picked(2, i); }
+                            writes-toggled(v) => { root.writes-toggled(2, v); }
+                            action => { root.card-action(2); }
+                            copy(t) => { root.copy-text(t) }
+                            addrs-toggled => { root.addrs-toggled(2); }
+                        }
+                    }
+                }
+            }
+            Rectangle { width: 1px; background: Theme.line; }
+            // The logs.
+            VerticalLayout {
+                horizontal-stretch: 1;
+                Rectangle {
+                    height: 44px;
+                    background: Theme.bg;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        alignment: start;
+                        VerticalLayout {
+                            alignment: center;
+                            Segmented {
+                                label: "Logs";
+                                options: root.tabs;
+                                selected: root.tab;
+                                controlled: true;
+                                inert: root.dialog-open;
+                                changed(i) => { root.tab-picked(i); }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        background: Theme.line;
+                    }
+                }
+                if root.tab == 0: SyslogPane {
+                    vertical-stretch: 1;
+                    rows: root.syslog-rows;
+                    empty-text: root.syslog-empty;
+                    detail: root.detail;
+                    filter-text <=> root.filter-text;
+                    severities: root.severities;
+                    severity: root.severity;
+                    sources: root.sources;
+                    source: root.source;
+                    paused: root.paused;
+                    pause-text: root.pause-text;
+                    log-to-file: root.log-to-file;
+                    log-note: root.log-note;
+                    log-note-kind: root.log-note-kind;
+                    log-folder: root.log-folder;
+                    scroll-to: root.syslog-scroll-to;
+                    scroll-seq: root.syslog-scroll-seq;
+                    inert: root.dialog-open;
+                    filter-edited(t) => { root.filter-edited(t); }
+                    filter-escaped => { root.filter-escaped() }
+                    severity-picked(i) => { root.severity-picked(i); }
+                    source-picked(i) => { root.source-picked(i); }
+                    pause-toggled => { root.pause-toggled(); }
+                    clear => { root.clear-syslog(); }
+                    log-to-file-toggled(v) => { root.log-to-file-toggled(v); }
+                    pick-log-folder => { root.pick-log-folder(); }
+                    save-view => { root.save-view(); }
+                    row-clicked(i) => { root.syslog-row-clicked(i); }
+                    key-moved(d) => { root.syslog-key(d); }
+                    copy-detail => { root.copy-detail() }
+                }
+                if root.tab == 1: LogPane {
+                    vertical-stretch: 1;
+                    title: "TFTP log";
+                    rows: root.tftp-log;
+                    count: root.tftp-count;
+                    empty-text: root.tftp-empty;
+                    inert: root.dialog-open;
+                    copy => { root.copy-log(0) }
+                    clear => { root.clear-log(0); }
+                }
+                if root.tab == 2: LogPane {
+                    vertical-stretch: 1;
+                    title: "HTTP log";
+                    rows: root.http-log;
+                    count: root.http-count;
+                    empty-text: root.http-empty;
+                    inert: root.dialog-open;
+                    copy => { root.copy-log(2) }
+                    clear => { root.clear-log(2); }
+                }
+            }
+        }
+
+        // ---- the status line ----
+        Rectangle { height: 1px; background: Theme.line; }
+        Rectangle {
+            height: 26px;
+            background: Theme.bg;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 12px;
+                Text { text: root.status-left; color: root.status-warn ? Theme.warn-text : Theme.ink-2; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; min-width: 0px; }
+                Text { text: root.status-right; font-family: Type.mono; color: Theme.ink-3; vertical-alignment: center; overflow: elide; min-width: 0px; max-width: 360px; }
+            }
+        }
+    }
+
+    // Toasts, newest at the bottom, above the status line.
+    VerticalLayout {
+        x: root.width - self.width - 14px;
+        y: root.height - self.height - 40px;
+        width: 380px;
+        height: self.preferred-height;
+        spacing: 8px;
+        for t in root.toasts: Toast {
+            text: t.text;
+            kind: t.kind;
+            action: t.action;
+            inert: root.dialog-open;
+            action-clicked => { root.toast-action(t.id); }
+            dismissed => { root.toast-dismissed(t.id); }
+            copy => { root.copy-text(t.text) }
+        }
+    }
+
+    if root.consent-open: ConsentDialog {
+        width: root.width;
+        height: root.height;
+        c: root.consent;
+        allow => { root.consent-allow(); }
+        cancel => { root.consent-cancel(); }
+        blocks-toggled(v) => { root.consent-blocks(v); }
+    }
+
+    if root.about-open: AboutDialog {
+        width: root.width;
+        height: root.height;
+        line: root.about-line;
+        rows: root.check-rows;
+        checking: root.checking;
+        checked: root.checked;
+        check => { root.check-install(); }
+        open-site => { root.open-site(); }
+        closed => { root.about-open = false; }
+    }
+
+    TipLayer {}
+}

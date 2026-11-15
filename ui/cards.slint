@@ -1,0 +1,348 @@
+// The server cards of the left column: a switch, the port, where it listens, its state, and
+// what it serves right now. They draw; Rust decides.
+
+import { Theme, Type, Icons, Icon, Chamfer, Field, Checkbox, Select, Button, ButtonKind, CopyButton, ProgressBar, TipArea } from "@vibeware";
+import { CardView, AddrLine, TransferRow } from "types.slint";
+
+// An on/off switch: a cut track with a square knob (0/45/90 degrees only). A checkbox to
+// screen readers and tests ("TFTP", checked).
+export component Switch {
+    in property <bool> on;
+    in property <string> label;
+    in property <bool> inert;
+    callback toggled(bool);
+
+    width: 30px;
+    height: 16px;
+    forward-focus: fs;
+    accessible-role: checkbox;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.on;
+    accessible-action-default => { root.toggled(!root.on); }
+
+    fs := FocusScope {
+        focus-on-tab-navigation: !root.inert;
+        focus-on-click: false;
+        key-pressed(e) => {
+            if (e.text == " " || e.text == Key.Return) {
+                root.toggled(!root.on);
+                return accept;
+            }
+            reject
+        }
+    }
+    Chamfer {
+        width: 100%;
+        height: 100%;
+        cut: 4px;
+        fill: root.on ? Theme.accent : Theme.bg;
+        stroke: fs.has-focus ? Theme.focus : root.on ? transparent : (ta.has-hover ? Theme.ink-3 : Theme.line-strong);
+    }
+    Rectangle {
+        x: root.on ? root.width - self.width - 3px : 3px;
+        y: 3px;
+        width: 10px;
+        height: 10px;
+        background: root.on ? Theme.accent-ink : Theme.ink-3;
+    }
+    ta := TouchArea {
+        clicked => { root.toggled(!root.on); }
+    }
+}
+
+// A small square that carries a state's colour (with the words beside it, never alone).
+component Dot inherits Rectangle {
+    in property <int> kind;
+    width: 8px;
+    height: 8px;
+    background: root.kind == 1 ? Theme.ok : root.kind == 2 ? Theme.warn : root.kind == 3 ? Theme.danger : Theme.ink-3;
+}
+
+// One listening address: "192.168.1.20  Ethernet", or for HTTP its URL with Copy.
+component AddrRow inherits HorizontalLayout {
+    in property <AddrLine> a;
+    in property <bool> inert;
+    callback copy(string) -> bool;
+    spacing: 8px;
+    height: root.a.url != "" ? Theme.control-h : 18px;
+    Rectangle {
+        horizontal-stretch: 1;
+        min-width: 0px;
+        accessible-role: list-item;
+        accessible-label: root.a.url != "" ? root.a.url : root.a.addr;
+        accessible-description: root.a.adapter;
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: root.a.url != "" ? root.a.url : root.a.addr;
+                font-family: Type.mono;
+                font-size: Type.small;
+                color: root.a.url != "" ? Theme.accent : Theme.ink;
+                vertical-alignment: center;
+                overflow: elide;
+                min-width: 0px;
+                horizontal-stretch: 1;
+                accessible-role: none;
+            }
+            Text {
+                text: root.a.adapter;
+                font-size: Type.small;
+                color: Theme.ink-3;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+                overflow: elide;
+                min-width: 0px;
+                max-width: 110px;
+                accessible-role: none;
+            }
+        }
+    }
+    if root.a.url != "": CopyButton {
+        tooltip: "Copy " + root.a.url;
+        inert: root.inert;
+        copy => { root.copy(root.a.url) }
+    }
+}
+
+// A TFTP transfer underway.
+component TransferLine inherits VerticalLayout {
+    in property <TransferRow> t;
+    spacing: 3px;
+    Rectangle {
+        height: 18px;
+        accessible-role: list-item;
+        accessible-label: (root.t.write ? "Receiving " : "Sending ") + root.t.file;
+        accessible-description: root.t.peer + " " + root.t.detail;
+        HorizontalLayout {
+            spacing: 6px;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    path: root.t.write ? Icons.download : Icons.upload;
+                    tint: Theme.accent;
+                }
+            }
+            Text {
+                text: root.t.file;
+                font-family: Type.mono;
+                font-size: Type.small;
+                color: Theme.ink;
+                vertical-alignment: center;
+                overflow: elide;
+                min-width: 0px;
+                horizontal-stretch: 1;
+                accessible-role: none;
+            }
+            Text {
+                text: root.t.detail;
+                font-family: Type.mono;
+                font-size: Type.small;
+                color: Theme.ink-2;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+        }
+    }
+    Text {
+        text: root.t.peer;
+        font-family: Type.mono;
+        font-size: Type.small;
+        color: Theme.ink-3;
+        overflow: elide;
+        accessible-role: none;
+    }
+    ProgressBar {
+        value: root.t.progress;
+    }
+}
+
+export component ServerCard inherits Chamfer {
+    in property <int> kind;
+    in property <CardView> c;
+    in property <[string]> binds;
+    in property <[AddrLine]> addrs;
+    in property <[TransferRow]> transfers;
+    in property <bool> inert;
+    callback toggled(bool);
+    callback port-edited(string);
+    callback port-accepted(string);
+    callback port-escaped() -> bool;
+    callback port-blurred();
+    callback bind-picked(int);
+    callback writes-toggled(bool);
+    callback proto-toggled(bool, bool);
+    callback action();
+    callback copy(string) -> bool;
+    callback addrs-toggled();
+
+    cut: Theme.cut;
+    fill: Theme.surface;
+    stroke: root.c.on ? Theme.line-strong : Theme.line;
+    height: col.preferred-height;
+
+    col := VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 10px;
+            height: Theme.control-h;
+            VerticalLayout {
+                alignment: center;
+                Switch {
+                    on: root.c.on;
+                    label: root.c.title;
+                    inert: root.inert;
+                    toggled(v) => { root.toggled(v); }
+                }
+            }
+            Text {
+                text: root.c.title;
+                font-size: Type.body;
+                font-weight: Type.strong;
+                color: Theme.ink;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+            Text {
+                text: root.c.proto;
+                font-family: Type.mono;
+                font-size: Type.small;
+                color: Theme.ink-3;
+                vertical-alignment: center;
+                overflow: elide;
+                min-width: 0px;
+                horizontal-stretch: 1;
+                accessible-role: none;
+            }
+            Field {
+                width: 92px;
+                horizontal-stretch: 0;
+                label: "PORT";
+                a11y-name: root.c.title + " port";
+                mono: true;
+                text: root.c.port;
+                invalid: root.c.port-invalid;
+                inert: root.inert;
+                edited(t) => { root.port-edited(t); }
+                accepted(t) => { root.port-accepted(t); }
+                escaped => { root.port-escaped() }
+                blurred => { root.port-blurred(); }
+            }
+        }
+        Select {
+            horizontal-stretch: 1;
+            label: root.c.title + " address";
+            mono: true;
+            options: root.binds;
+            selected: root.c.bind;
+            controlled: true;
+            inert: root.inert;
+            changed(i) => { root.bind-picked(i); }
+        }
+        HorizontalLayout {
+            spacing: 16px;
+            height: 20px;
+            if root.kind != 1: Checkbox {
+                text: root.kind == 0 ? "Allow writes (WRQ)" : "Allow uploads (PUT)";
+                checked: root.c.writes;
+                controlled: true;
+                inert: root.inert;
+                toggled(v) => { root.writes-toggled(v); }
+            }
+            if root.kind == 1: Checkbox {
+                text: "UDP";
+                checked: root.c.udp;
+                controlled: true;
+                inert: root.inert;
+                toggled(v) => { root.proto-toggled(false, v); }
+            }
+            if root.kind == 1: Checkbox {
+                text: "TCP";
+                checked: root.c.tcp;
+                controlled: true;
+                inert: root.inert;
+                toggled(v) => { root.proto-toggled(true, v); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        if root.c.state != "": HorizontalLayout {
+            spacing: 8px;
+            VerticalLayout {
+                alignment: start;
+                padding-top: 4px;
+                Dot { kind: root.c.state-kind; }
+            }
+            Text {
+                text: root.c.state;
+                font-size: Type.small;
+                color: root.c.state-kind == 3 ? Theme.danger-text : root.c.state-kind == 0 ? Theme.ink-2 : Theme.ink;
+                wrap: word-wrap;
+                min-width: 0px;
+                min-height: self.preferred-height;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+            if root.c.action != "": VerticalLayout {
+                alignment: center;
+                Button {
+                    text: root.c.action;
+                    kind: ButtonKind.secondary;
+                    inert: root.inert;
+                    clicked => { root.action(); }
+                }
+            }
+        }
+        if root.addrs.length > 0: VerticalLayout {
+            spacing: 2px;
+            accessible-role: AccessibleRole.list;
+            accessible-label: root.c.title + " addresses";
+            for a in root.addrs: VerticalLayout {
+                if a.toggle == "": AddrRow {
+                    a: a;
+                    inert: root.inert;
+                    copy(u) => { root.copy(u) }
+                }
+                // Under a long list: "+4 more" shows them all, "Show fewer" folds them again.
+                if a.toggle != "": HorizontalLayout {
+                    alignment: start;
+                    Button {
+                        text: a.toggle;
+                        label: a.toggle + " (" + root.c.title + " addresses)";
+                        kind: ButtonKind.ghost;
+                        height: 20px;
+                        inert: root.inert;
+                        clicked => { root.addrs-toggled(); }
+                    }
+                }
+            }
+        }
+        if root.c.note != "": HorizontalLayout {
+            spacing: 8px;
+            VerticalLayout {
+                alignment: start;
+                Icon {
+                    path: Icons.alert;
+                    tint: root.c.note-kind == 3 ? Theme.danger : root.c.note-kind == 2 ? Theme.warn : Theme.ink-3;
+                }
+            }
+            Text {
+                text: root.c.note;
+                font-size: Type.small;
+                color: Theme.ink-2;
+                wrap: word-wrap;
+                min-width: 0px;
+                min-height: self.preferred-height;
+                horizontal-stretch: 1;
+            }
+        }
+        if root.transfers.length > 0: VerticalLayout {
+            spacing: 8px;
+            accessible-role: AccessibleRole.list;
+            accessible-label: "Transfers";
+            for t in root.transfers: TransferLine {
+                t: t;
+            }
+        }
+    }
+}

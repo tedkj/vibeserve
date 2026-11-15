@@ -1,0 +1,583 @@
+// The right side's tables: syslog messages (with the filter strip and the detail of the
+// selected one) and the TFTP and HTTP activity logs. Columns sit at x positions computed from
+// the width (no layout: widths that follow the table cannot feed back into its minimum size).
+
+import { ListView } from "std-widgets.slint";
+import { Theme, Type, Icons, Icon, Field, Select, Button, ButtonKind, IconButton, CopyButton, Checkbox } from "@vibeware";
+import { SyslogRow, SyslogDetail, LogRow } from "types.slint";
+
+// A text inside a row: never a node of its own (one accessibility node per row, VIBEWARE.md).
+component Cell inherits Text {
+    font-family: Type.mono;
+    font-size: Type.small;
+    color: Theme.ink-2;
+    vertical-alignment: center;
+    overflow: elide;
+    accessible-role: none;
+}
+
+component Head inherits Text {
+    font-family: Type.mono;
+    font-size: Type.small;
+    color: Theme.ink-3;
+    vertical-alignment: center;
+    overflow: elide;
+    accessible-role: none;
+}
+
+// The text a table shows when it has no rows, centred.
+component EmptyNote inherits VerticalLayout {
+    in property <string> text;
+    alignment: center;
+    padding: 24px;
+    HorizontalLayout {
+        alignment: center;
+        Text {
+            max-width: 460px;
+            text: root.text;
+            horizontal-alignment: center;
+            font-size: Type.small;
+            color: Theme.ink-3;
+            wrap: word-wrap;
+            min-height: self.preferred-height;
+        }
+    }
+}
+
+global Cols {
+    out property <length> pad: 12px;
+    out property <length> gap: 10px;
+    out property <length> time: 92px;
+    out property <length> facility: 60px;
+    out property <length> severity: 64px;
+}
+
+struct SyslogGeom {
+    wide: bool,
+    source: length,
+    devtime: length,
+    host: length,
+    app: length,
+    msg: length,
+    x-time: length,
+    x-source: length,
+    x-facility: length,
+    x-severity: length,
+    x-devtime: length,
+    x-host: length,
+    x-app: length,
+    x-msg: length,
+}
+
+// Where the syslog columns sit. Narrow tables drop facility and device time (the detail and
+// Save view still have them).
+component SyslogWidths {
+    in property <length> total;
+    out property <bool> wide: root.total >= 820px;
+    out property <length> fixed: Cols.time + Cols.severity + (root.wide ? Cols.facility : 0px);
+    out property <int> gaps: root.wide ? 7 : 5;
+    out property <length> flex: Math.max(0px, root.total - 2 * Cols.pad - root.gaps * Cols.gap - root.fixed);
+    out property <length> source: Math.floor(root.flex * (root.wide ? 0.15 : 0.20) / 1px) * 1px;
+    out property <length> devtime: root.wide ? Math.floor(root.flex * 0.19 / 1px) * 1px : 0px;
+    out property <length> host: Math.floor(root.flex * (root.wide ? 0.12 : 0.17) / 1px) * 1px;
+    out property <length> app: Math.floor(root.flex * (root.wide ? 0.14 : 0.18) / 1px) * 1px;
+    out property <length> msg: root.flex - root.source - root.devtime - root.host - root.app;
+    out property <length> x-time: Cols.pad;
+    out property <length> x-source: root.x-time + Cols.time + Cols.gap;
+    out property <length> x-facility: root.x-source + root.source + Cols.gap;
+    out property <length> x-severity: root.x-facility + (root.wide ? Cols.facility + Cols.gap : 0px);
+    out property <length> x-devtime: root.x-severity + Cols.severity + Cols.gap;
+    out property <length> x-host: root.x-devtime + (root.wide ? root.devtime + Cols.gap : 0px);
+    out property <length> x-app: root.x-host + root.host + Cols.gap;
+    out property <length> x-msg: root.x-app + root.app + Cols.gap;
+    out property <SyslogGeom> geom: {
+        wide: root.wide, source: root.source, devtime: root.devtime, host: root.host, app: root.app, msg: root.msg,
+        x-time: root.x-time, x-source: root.x-source, x-facility: root.x-facility, x-severity: root.x-severity,
+        x-devtime: root.x-devtime, x-host: root.x-host, x-app: root.x-app, x-msg: root.x-msg,
+    };
+}
+
+component SyslogLine inherits Rectangle {
+    in property <SyslogRow> r;
+    in property <SyslogGeom> w;
+    callback clicked();
+    height: Theme.row-h;
+    accessible-role: list-item;
+    accessible-label: root.r.msg;
+    accessible-description: root.r.time + " " + root.r.source + " " + root.r.facility + "." + root.r.severity + " " + root.r.host + " " + root.r.app;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.r.selected;
+    accessible-action-default => { root.clicked(); }
+    property <color> sev-ink: root.r.sev <= 3 ? Theme.danger : root.r.sev == 4 ? Theme.warn : root.r.sev == 7 ? Theme.ink-3 : Theme.ink;
+    background: root.r.selected ? Theme.accent-soft : ta.has-hover ? Theme.surface-2 : transparent;
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    if root.r.selected: Rectangle {
+        x: 0;
+        width: 2px;
+        background: Theme.accent;
+    }
+    Cell { x: root.w.x-time; width: Cols.time; height: 100%; text: root.r.time; color: Theme.ink-3; }
+    Cell { x: root.w.x-source; width: root.w.source; height: 100%; text: root.r.source; }
+    if root.w.wide: Cell { x: root.w.x-facility; width: Cols.facility; height: 100%; text: root.r.facility; color: Theme.ink-3; }
+    Cell { x: root.w.x-severity; width: Cols.severity; height: 100%; text: root.r.severity; color: Theme.as-text(root.sev-ink); font-weight: root.r.sev <= 3 ? Type.strong : Type.regular; }
+    if root.w.wide: Cell { x: root.w.x-devtime; width: root.w.devtime; height: 100%; text: root.r.device-time; color: Theme.ink-3; }
+    Text {
+        x: root.w.x-host;
+        width: root.w.host;
+        height: 100%;
+        text: root.r.host;
+        font-size: Type.small;
+        color: Theme.ink-2;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+    Cell { x: root.w.x-app; width: root.w.app; height: 100%; text: root.r.app; color: Theme.ink-2; }
+    Text {
+        x: root.w.x-msg;
+        width: root.w.msg;
+        height: 100%;
+        text: root.r.msg;
+        font-size: Type.small;
+        color: root.r.sev == 7 ? Theme.ink-2 : Theme.ink;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+}
+
+export component SyslogPane inherits Rectangle {
+    in property <[SyslogRow]> rows;
+    in property <string> empty-text;
+    in property <SyslogDetail> detail;
+    in-out property <string> filter-text;
+    in property <bool> filter-invalid;
+    in property <[string]> severities;
+    in property <int> severity;
+    in property <[string]> sources;
+    in property <int> source;
+    in property <bool> paused;
+    in property <string> pause-text;
+    in property <bool> log-to-file;
+    in property <string> log-note;
+    in property <int> log-note-kind;
+    in property <string> log-folder;
+    in property <int> scroll-to: -1;
+    in property <int> scroll-seq;
+    in property <bool> inert;
+    callback filter-edited(string);
+    callback filter-escaped() -> bool;
+    callback severity-picked(int);
+    callback source-picked(int);
+    callback pause-toggled();
+    callback clear();
+    callback log-to-file-toggled(bool);
+    callback pick-log-folder();
+    callback save-view();
+    callback row-clicked(int);
+    // -2 Home, -1 Up, 1 Down, 2 End.
+    callback key-moved(int);
+    callback copy-detail() -> bool;
+
+    changed scroll-seq => {
+        later.n = 2;
+        later.running = true;
+    }
+    // Deferred: the list lays new rows out first; twice, as one pass was not enough for End
+    // (VIBEWARE.md, list keys).
+    later := Timer {
+        property <int> n;
+        interval: 1ms;
+        running: false;
+        triggered => {
+            self.n -= 1;
+            if (self.n <= 0) {
+                self.running = false;
+            }
+            if (root.scroll-to >= 0) {
+                let top = root.scroll-to * Theme.row-h;
+                if (top < -list.content-y) {
+                    list.content-y = -top;
+                } else if (top + Theme.row-h > -list.content-y + list.visible-height) {
+                    list.content-y = -(top + Theme.row-h - list.visible-height);
+                }
+            }
+        }
+    }
+
+    w := SyslogWidths { total: list.visible-width; }
+
+    VerticalLayout {
+        // ---- the strip: filter, severity, source; pause, clear, the file, save ----
+        Rectangle {
+            background: Theme.bg;
+            VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Field {
+                        label: "FILTER";
+                        a11y-name: "Filter";
+                        placeholder: "host, app or message";
+                        text <=> root.filter-text;
+                        invalid: root.filter-invalid;
+                        inert: root.inert;
+                        edited(t) => { root.filter-edited(t); }
+                        escaped => { root.filter-escaped() }
+                    }
+                    Select {
+                        width: 150px;
+                        label: "Severity";
+                        options: root.severities;
+                        selected: root.severity;
+                        controlled: true;
+                        inert: root.inert;
+                        changed(i) => { root.severity-picked(i); }
+                    }
+                    Select {
+                        width: 190px;
+                        label: "Source";
+                        mono: true;
+                        options: root.sources;
+                        selected: root.source;
+                        controlled: true;
+                        inert: root.inert;
+                        changed(i) => { root.source-picked(i); }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Button {
+                        text: root.pause-text;
+                        label: root.paused ? "Resume" : "Pause";
+                        icon: root.paused ? Icons.refresh : Icons.pause;
+                        kind: ButtonKind.ghost;
+                        active: root.paused;
+                        inert: root.inert;
+                        tooltip: root.paused ? "Show what arrived meanwhile" : "Freeze the view; reception goes on";
+                        clicked => { root.pause-toggled(); }
+                    }
+                    IconButton {
+                        icon: Icons.trash;
+                        label: "Clear syslog";
+                        tooltip: root.log-to-file ? "Clear the messages in the window (the log file keeps them)" : "Clear the messages in the window. Log to file is off, so they are gone for good";
+                        inert: root.inert;
+                        clicked => { root.clear(); }
+                    }
+                    Rectangle { width: 4px; }
+                    VerticalLayout {
+                        alignment: center;
+                        Checkbox {
+                            text: "Log to file";
+                            checked: root.log-to-file;
+                            controlled: true;
+                            inert: root.inert;
+                            toggled(v) => { root.log-to-file-toggled(v); }
+                        }
+                    }
+                    IconButton {
+                        icon: Icons.folder;
+                        label: "Log folder";
+                        tooltip: root.log-folder;
+                        inert: root.inert;
+                        clicked => { root.pick-log-folder(); }
+                    }
+                    Text {
+                        text: root.log-note;
+                        font-size: Type.small;
+                        color: root.log-note-kind == 3 ? Theme.danger-text : root.log-note-kind == 2 ? Theme.warn-text : Theme.ink-3;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        min-width: 0px;
+                        horizontal-stretch: 1;
+                    }
+                    Button {
+                        text: "Save view…";
+                        icon: Icons.download;
+                        kind: ButtonKind.ghost;
+                        inert: root.inert;
+                        tooltip: "The rows shown, as text or CSV";
+                        clicked => { root.save-view(); }
+                    }
+                }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.line;
+            }
+        }
+        // ---- the head ----
+        Rectangle {
+            height: 24px;
+            Head { x: w.x-time; width: Cols.time; height: 100%; text: "RECEIVED"; }
+            Head { x: w.x-source; width: w.source; height: 100%; text: "SOURCE"; }
+            if w.wide: Head { x: w.x-facility; width: Cols.facility; height: 100%; text: "FAC"; }
+            Head { x: w.x-severity; width: Cols.severity; height: 100%; text: "SEVERITY"; }
+            if w.wide: Head { x: w.x-devtime; width: w.devtime; height: 100%; text: "DEVICE TIME"; }
+            Head { x: w.x-host; width: w.host; height: 100%; text: "HOST"; }
+            Head { x: w.x-app; width: w.app; height: 100%; text: "APP"; }
+            Head { x: w.x-msg; width: w.msg; height: 100%; text: "MESSAGE"; }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.line;
+            }
+        }
+        // ---- the rows ----
+        Rectangle {
+            vertical-stretch: 1;
+            fs := FocusScope {
+                accessible-role: AccessibleRole.list;
+                accessible-label: "Syslog messages";
+                focus-on-tab-navigation: !root.inert;
+                key-pressed(e) => {
+                    if (root.inert) {
+                        return reject;
+                    }
+                    if (e.text == Key.UpArrow) {
+                        root.key-moved(-1);
+                        return accept;
+                    }
+                    if (e.text == Key.DownArrow) {
+                        root.key-moved(1);
+                        return accept;
+                    }
+                    if (e.text == Key.Home) {
+                        root.key-moved(-2);
+                        return accept;
+                    }
+                    if (e.text == Key.End) {
+                        root.key-moved(2);
+                        return accept;
+                    }
+                    reject
+                }
+                list := ListView {
+                    for r[i] in root.rows: SyslogLine {
+                        r: r;
+                        w: w.geom;
+                        clicked => {
+                            fs.focus();
+                            root.row-clicked(i);
+                        }
+                    }
+                }
+            }
+            if root.rows.length == 0: EmptyNote {
+                width: 100%;
+                height: 100%;
+                text: root.empty-text;
+            }
+        }
+        // ---- the selected message, whole ----
+        if root.detail.shown: Rectangle {
+            height: 96px;
+            background: Theme.bg;
+            Rectangle {
+                y: 0;
+                height: 1px;
+                background: Theme.line;
+            }
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 8px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 8px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 4px;
+                    Text {
+                        text: root.detail.head;
+                        font-family: Type.mono;
+                        font-size: Type.small;
+                        color: Theme.ink-3;
+                        overflow: elide;
+                        min-width: 0px;
+                    }
+                    Rectangle {
+                        vertical-stretch: 1;
+                        clip: true;
+                        Text {
+                            y: 0;
+                            width: 100%;
+                            height: 100%;
+                            text: root.detail.body;
+                            font-size: Type.small;
+                            color: Theme.ink;
+                            wrap: word-wrap;
+                            overflow: elide;
+                            vertical-alignment: top;
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: start;
+                    CopyButton {
+                        tooltip: "Copy the whole message";
+                        inert: root.inert;
+                        copy => { root.copy-detail() }
+                    }
+                }
+            }
+        }
+    }
+}
+
+global LogCols {
+    out property <length> time: 72px;
+    out property <length> bytes: 84px;
+    out property <length> duration: 72px;
+}
+
+struct LogGeom {
+    peer: length,
+    request: length,
+    result: length,
+    x-time: length,
+    x-peer: length,
+    x-request: length,
+    x-bytes: length,
+    x-result: length,
+    x-duration: length,
+}
+
+component LogWidths {
+    in property <length> total;
+    out property <length> flex: Math.max(0px, root.total - 2 * Cols.pad - 5 * Cols.gap - LogCols.time - LogCols.bytes - LogCols.duration);
+    out property <length> peer: Math.floor(root.flex * 0.27 / 1px) * 1px;
+    out property <length> request: Math.floor(root.flex * 0.43 / 1px) * 1px;
+    out property <length> result: root.flex - root.peer - root.request;
+    out property <length> x-time: Cols.pad;
+    out property <length> x-peer: root.x-time + LogCols.time + Cols.gap;
+    out property <length> x-request: root.x-peer + root.peer + Cols.gap;
+    out property <length> x-bytes: root.x-request + root.request + Cols.gap;
+    out property <length> x-result: root.x-bytes + LogCols.bytes + Cols.gap;
+    out property <length> x-duration: root.x-result + root.result + Cols.gap;
+    out property <LogGeom> geom: {
+        peer: root.peer, request: root.request, result: root.result, x-time: root.x-time, x-peer: root.x-peer,
+        x-request: root.x-request, x-bytes: root.x-bytes, x-result: root.x-result, x-duration: root.x-duration,
+    };
+}
+
+component LogLine inherits Rectangle {
+    in property <LogRow> r;
+    in property <LogGeom> w;
+    height: Theme.row-h;
+    accessible-role: list-item;
+    accessible-label: root.r.request;
+    accessible-description: root.r.time + " " + root.r.peer + " " + root.r.result + " " + root.r.bytes + " " + root.r.duration;
+    background: ta.has-hover ? Theme.surface-2 : transparent;
+    ta := TouchArea {}
+    Cell { x: root.w.x-time; width: LogCols.time; height: 100%; text: root.r.time; color: Theme.ink-3; }
+    Cell { x: root.w.x-peer; width: root.w.peer; height: 100%; text: root.r.peer; }
+    Cell { x: root.w.x-request; width: root.w.request; height: 100%; text: root.r.request; color: Theme.ink; }
+    Cell { x: root.w.x-bytes; width: LogCols.bytes; height: 100%; text: root.r.bytes; horizontal-alignment: right; }
+    Text {
+        x: root.w.x-result;
+        width: root.w.result;
+        height: 100%;
+        text: root.r.result;
+        font-size: Type.small;
+        color: root.r.kind == 3 ? Theme.danger-text : root.r.kind == 2 ? Theme.warn-text : Theme.ink-2;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+    Cell { x: root.w.x-duration; width: LogCols.duration; height: 100%; text: root.r.duration; horizontal-alignment: right; color: Theme.ink-3; }
+}
+
+export component LogPane inherits Rectangle {
+    in property <string> title;
+    in property <[LogRow]> rows;
+    in property <string> count;
+    in property <string> empty-text;
+    in property <bool> inert;
+    callback copy() -> bool;
+    callback clear();
+
+    w := LogWidths { total: list.visible-width; }
+
+    VerticalLayout {
+        Rectangle {
+            background: Theme.bg;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 8px;
+                Text {
+                    text: root.count;
+                    font-family: Type.mono;
+                    font-size: Type.small;
+                    color: Theme.ink-3;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                    min-width: 0px;
+                }
+                CopyButton {
+                    caption: "Copy";
+                    tooltip: "The whole log as text";
+                    enabled: root.rows.length > 0;
+                    inert: root.inert;
+                    copy => { root.copy() }
+                }
+                IconButton {
+                    icon: Icons.trash;
+                    label: "Clear " + root.title;
+                    tooltip: "Clear this log";
+                    enabled: root.rows.length > 0;
+                    inert: root.inert;
+                    clicked => { root.clear(); }
+                }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.line;
+            }
+        }
+        Rectangle {
+            height: 24px;
+            Head { x: w.x-time; width: LogCols.time; height: 100%; text: "TIME"; }
+            Head { x: w.x-peer; width: w.peer; height: 100%; text: "PEER"; }
+            Head { x: w.x-request; width: w.request; height: 100%; text: "REQUEST"; }
+            Head { x: w.x-bytes; width: LogCols.bytes; height: 100%; text: "BYTES"; horizontal-alignment: right; }
+            Head { x: w.x-result; width: w.result; height: 100%; text: "RESULT"; }
+            Head { x: w.x-duration; width: LogCols.duration; height: 100%; text: "TIME TAKEN"; horizontal-alignment: right; }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.line;
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            FocusScope {
+                accessible-role: AccessibleRole.list;
+                accessible-label: root.title;
+                focus-on-tab-navigation: false;
+                list := ListView {
+                    for r in root.rows: LogLine {
+                        r: r;
+                        w: w.geom;
+                    }
+                }
+            }
+            if root.rows.length == 0: EmptyNote {
+                width: 100%;
+                height: 100%;
+                text: root.empty-text;
+            }
+        }
+    }
+}

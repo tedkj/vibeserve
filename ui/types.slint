@@ -1,0 +1,108 @@
+// What Rust hands the window. Every word in these is made in Rust (controller.rs, view.rs).
+
+// One server card. kind: 0 TFTP, 1 syslog, 2 HTTP.
+export struct CardView {
+    on: bool,
+    // "TFTP", "Syslog", "HTTP".
+    title: string,
+    // "UDP 69", "UDP · TCP 514", "TCP 80".
+    proto: string,
+    port: string,
+    port-invalid: bool,
+    bind: int,
+    // TFTP and HTTP: writes (uploads) allowed.
+    writes: bool,
+    // Syslog: the two receivers.
+    udp: bool,
+    tcp: bool,
+    // "Listening on 3 addresses", "Port 69 in use by tftpd64.exe (PID 1234)", "Off".
+    state: string,
+    // 0 quiet (off, starting), 1 ok, 2 warn, 3 danger.
+    state-kind: int,
+    // A button after the state ("Use 8080"), or "".
+    action: string,
+    // "Other devices may be blocked by Windows Firewall", or "".
+    note: string,
+    // 0 quiet, 2 warn, 3 danger.
+    note-kind: int,
+}
+
+// One address a server listens on: "192.168.1.20", "Ethernet", and for HTTP its URL.
+export struct AddrLine {
+    addr: string,
+    adapter: string,
+    url: string,
+    // Not an address: the line that shows the rest ("+4 more") or hides it ("Show fewer").
+    toggle: string,
+}
+
+// A TFTP transfer underway: "↓ /c9300.bin", "192.168.1.50:51234", "42 % · 1.2 MB/s".
+export struct TransferRow {
+    file: string,
+    peer: string,
+    detail: string,
+    // 0..1, below 0 when the size is not known.
+    progress: float,
+    write: bool,
+}
+
+// One row of a server's activity log.
+export struct LogRow {
+    time: string,
+    peer: string,
+    request: string,
+    bytes: string,
+    result: string,
+    // 0 ok, 2 refused, 3 failed.
+    kind: int,
+    duration: string,
+}
+
+// One syslog message as a row.
+export struct SyslogRow {
+    time: string,
+    source: string,
+    facility: string,
+    severity: string,
+    // 0 emerg .. 7 debug: the severity's colour.
+    sev: int,
+    device-time: string,
+    host: string,
+    app: string,
+    msg: string,
+    selected: bool,
+}
+
+// The selected syslog message in full, under the table.
+export struct SyslogDetail {
+    shown: bool,
+    // "14:03:07.123 · 192.168.1.1 · udp · local7.notice · *Mar  1 00:00:12.345 · R1 · %SYS-5-CONFIG_I"
+    head: string,
+    // The message whole (structured data first, when there is any).
+    body: string,
+}
+
+// The firewall's state in the top bar.
+export struct FirewallView {
+    // "Firewall: rule active", "Firewall: may block other devices".
+    text: string,
+    // 0 quiet, 1 ok, 2 warn, 3 danger.
+    kind: int,
+    // The tooltip: what it means in a sentence.
+    tip: string,
+    // Clickable (it opens the consent again, or retries).
+    action: bool,
+}
+
+// The consent before the UAC prompt.
+export struct ConsentView {
+    title: string,
+    body: string,
+    // "Also remove Windows' 2 block rules for VibeServe", or "", and a line on why.
+    blocks: string,
+    blocks-note: string,
+    remove-blocks: bool,
+    // "Allow (Windows asks)" or "" (block-all: only OK).
+    allow: string,
+    cancel: string,
+}

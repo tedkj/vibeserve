@@ -1,0 +1,128 @@
+// The top bar's parts that are VibeServe's own: the root folder field and the firewall state;
+// and the consent before the firewall's UAC prompt.
+
+import { Theme, Type, Icons, Icon, TipArea, Dialog, Button, ButtonKind, Checkbox } from "@vibeware";
+import { FirewallView, ConsentView } from "types.slint";
+
+// The firewall's state: a coloured square and words; when there is something to do (allow
+// again), it is a button.
+export component FirewallChip inherits Rectangle {
+    in property <FirewallView> f;
+    in property <bool> inert;
+    callback clicked();
+    height: Theme.control-h;
+    min-width: row.preferred-width;
+    horizontal-stretch: 0;
+    forward-focus: fs;
+    accessible-role: button;
+    accessible-enabled: root.f.action;
+    accessible-label: root.f.text;
+    accessible-description: root.f.tip;
+    accessible-action-default => {
+        if (root.f.action) {
+            root.clicked();
+        }
+    }
+    background: root.f.action && ta.has-hover ? Theme.surface-3 : transparent;
+    border-width: fs.has-focus ? 1px : 0px;
+    border-color: Theme.focus;
+    fs := FocusScope {
+        focus-on-tab-navigation: root.f.action && !root.inert;
+        focus-on-click: false;
+        key-pressed(e) => {
+            if (root.f.action && (e.text == " " || e.text == Key.Return)) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+    row := HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                background: root.f.kind == 1 ? Theme.ok : root.f.kind == 2 ? Theme.warn : root.f.kind == 3 ? Theme.danger : Theme.ink-3;
+            }
+        }
+        Text {
+            text: root.f.text;
+            font-size: Type.small;
+            color: root.f.action ? Theme.ink : Theme.ink-2;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+    }
+    ta := TipArea {
+        tooltip: root.f.tip;
+        clicked => {
+            if (root.f.action) {
+                root.clicked();
+            }
+        }
+    }
+}
+
+export component ConsentDialog {
+    in property <ConsentView> c;
+    callback allow();
+    callback cancel();
+    callback blocks-toggled(bool);
+    Dialog {
+        width: root.width;
+        height: root.height;
+        title: root.c.title;
+        dialog-width: 460px;
+        accepted => {
+            if (root.c.allow != "") {
+                root.allow();
+            } else {
+                root.cancel();
+            }
+        }
+        cancelled => { root.cancel(); }
+        Text {
+            text: root.c.body;
+            wrap: word-wrap;
+            font-size: Type.small;
+            color: Theme.ink-2;
+            min-height: self.preferred-height;
+        }
+        if root.c.blocks != "": VerticalLayout {
+            spacing: 4px;
+            Checkbox {
+                text: root.c.blocks;
+                checked: root.c.remove-blocks;
+                controlled: true;
+                toggled(v) => { root.blocks-toggled(v); }
+            }
+            Text {
+                text: root.c.blocks-note;
+                wrap: word-wrap;
+                font-size: Type.small;
+                color: Theme.ink-3;
+                x: 22px;
+                width: parent.width - 22px;
+                min-height: self.preferred-height;
+            }
+        }
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+            Button {
+                text: root.c.cancel;
+                kind: root.c.allow != "" ? ButtonKind.ghost : ButtonKind.primary;
+                clicked => { root.cancel(); }
+            }
+            if root.c.allow != "": Button {
+                text: root.c.allow;
+                kind: ButtonKind.primary;
+                clicked => { root.allow(); }
+            }
+        }
+    }
+}
